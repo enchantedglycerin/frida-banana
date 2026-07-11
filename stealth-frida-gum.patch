@@ -1,0 +1,191 @@
+diff --git a/bindings/gumjs/gumscriptscheduler.c b/bindings/gumjs/gumscriptscheduler.c
+index b86a6c5..dbf3c46 100644
+--- a/bindings/gumjs/gumscriptscheduler.c
++++ b/bindings/gumjs/gumscriptscheduler.c
+@@ -6,6 +6,10 @@
+ 
+ #include "gumscriptscheduler.h"
+ 
++#ifdef HAVE_ANDROID
++# include <sys/prctl.h>
++#endif
++
+ struct _GumScriptScheduler
+ {
+   GObject parent;
+@@ -114,7 +118,8 @@ gum_script_scheduler_start (GumScriptScheduler * self)
+   {
+     self->js_loop = g_main_loop_new (self->js_context, TRUE);
+ 
+-    self->js_thread = g_thread_new ("gum-js-loop",
++    /* Stealth: neutral comm name instead of the "gum-js-loop" fingerprint. */
++    self->js_thread = g_thread_new ("gc-worker",
+         (GThreadFunc) gum_script_scheduler_run_js_loop, self);
+   }
+ }
+@@ -199,6 +204,15 @@ static void
+ gum_script_scheduler_perform_pool_job (GumScriptJob * job,
+                                        GumScriptScheduler * self)
+ {
++#ifdef HAVE_ANDROID
++  /*
++   * Stealth: GLib names thread-pool workers "pool-<prgname>"; override the
++   * current thread's comm with a neutral name so it does not read as a frida
++   * worker in /proc/<pid>/task/<tid>/comm.
++   */
++  prctl (PR_SET_NAME, (unsigned long) "gc-worker", 0UL, 0UL, 0UL);
++#endif
++
+   job->func (job->data);
+ 
+   gum_script_job_free (job);
+diff --git a/gum/backend-linux/gummemory-linux.c b/gum/backend-linux/gummemory-linux.c
+index 80c70d7..1f813ca 100644
+--- a/gum/backend-linux/gummemory-linux.c
++++ b/gum/backend-linux/gummemory-linux.c
+@@ -21,6 +21,16 @@
+ #include <sys/syscall.h>
+ #include <sys/uio.h>
+ 
++#ifdef HAVE_ANDROID
++# include <sys/prctl.h>
++# ifndef PR_SET_VMA
++#  define PR_SET_VMA 0x53564d41
++# endif
++# ifndef PR_SET_VMA_ANON_NAME
++#  define PR_SET_VMA_ANON_NAME 0
++# endif
++#endif
++
+ #if defined (HAVE_I386) && GLIB_SIZEOF_VOID_P == 4
+ # define GUM_SYS_PROCESS_VM_READV   347
+ # define GUM_SYS_PROCESS_VM_WRITEV  348
+@@ -244,6 +254,22 @@ gum_try_mprotect (gpointer address,
+ 
+   result = mprotect (aligned_address, aligned_size, posix_prot);
+ 
++#ifdef HAVE_ANDROID
++  /*
++   * Stealth: when gum commits its own code (allocated RW, then flipped to RX
++   * under the forced-W^X path), label the now-executable region as an ART JIT
++   * code cache so it does not appear as an unnamed anonymous executable
++   * mapping. Anon naming is a no-op on file-backed VMAs, so this never touches
++   * the target's own modules.
++   */
++  if (result == 0 && (posix_prot & PROT_EXEC) != 0)
++  {
++    prctl (PR_SET_VMA, PR_SET_VMA_ANON_NAME,
++        (unsigned long) aligned_address, (unsigned long) aligned_size,
++        (unsigned long) "dalvik-jit-code-cache");
++  }
++#endif
++
+   return result == 0;
+ }
+ 
+diff --git a/gum/backend-posix/gummemory-posix.c b/gum/backend-posix/gummemory-posix.c
+index 848b430..224f218 100644
+--- a/gum/backend-posix/gummemory-posix.c
++++ b/gum/backend-posix/gummemory-posix.c
+@@ -13,6 +13,16 @@
+ #include <unistd.h>
+ #include <sys/mman.h>
+ 
++#ifdef HAVE_ANDROID
++# include <sys/prctl.h>
++# ifndef PR_SET_VMA
++#  define PR_SET_VMA 0x53564d41
++# endif
++# ifndef PR_SET_VMA_ANON_NAME
++#  define PR_SET_VMA_ANON_NAME 0
++# endif
++#endif
++
+ typedef struct _GumAllocNearContext GumAllocNearContext;
+ typedef struct _GumEnumerateFreeRangesContext GumEnumerateFreeRangesContext;
+ 
+@@ -264,6 +274,31 @@ gum_try_suggest_allocation_base (const GumMemoryRange * range,
+   return TRUE;
+ }
+ 
++#ifdef HAVE_ANDROID
++
++/*
++ * Stealth: give every anonymous region gum maps an ART-like name via
++ * PR_SET_VMA_ANON_NAME so it blends with the app's own [anon:dalvik-*]
++ * regions instead of standing out as an unnamed anonymous mapping. The name
++ * pointer must stay valid for the life of the mapping (older Android kernels
++ * store the userspace pointer and read it lazily when generating
++ * /proc/self/maps), so only string literals (permanent .rodata) are used.
++ */
++static void
++gum_android_label_pages (gpointer base,
++                         gsize size,
++                         gint posix_prot)
++{
++  const char * name = ((posix_prot & PROT_EXEC) != 0)
++      ? "dalvik-jit-code-cache"
++      : "dalvik-LinearAlloc";
++
++  prctl (PR_SET_VMA, PR_SET_VMA_ANON_NAME, (unsigned long) base,
++      (unsigned long) size, (unsigned long) name);
++}
++
++#endif
++
+ static gpointer
+ gum_allocate_page_aligned (gpointer address,
+                            gsize size,
+@@ -293,7 +328,14 @@ gum_allocate_page_aligned (gpointer address,
+   }
+ #endif
+ 
+-  return (result != MAP_FAILED) ? result : NULL;
++  if (result == MAP_FAILED)
++    return NULL;
++
++#ifdef HAVE_ANDROID
++  gum_android_label_pages (result, size, prot);
++#endif
++
++  return result;
+ }
+ 
+ gboolean
+diff --git a/gum/gummemory.c b/gum/gummemory.c
+index 61679a5..d9cc794 100644
+--- a/gum/gummemory.c
++++ b/gum/gummemory.c
+@@ -249,6 +249,15 @@ gum_query_rwx_support (void)
+ {
+ #if defined (HAVE_DARWIN) && !defined (HAVE_I386)
+   return GUM_RWX_NONE;
++#elif defined (HAVE_ANDROID)
++  /*
++   * Stealth: report NO rwx support so gum takes the W^X path everywhere
++   * (allocate RW, then mprotect RX on commit). This prevents gum from ever
++   * creating a writable+executable page, which is the tell an anti-cheat
++   * scans /proc/self/maps for (ART enforces W^X, so an rwxp anon region
++   * uniquely fingerprints an injected agent).
++   */
++  return GUM_RWX_NONE;
+ #else
+   return GUM_RWX_FULL;
+ #endif
+@@ -1263,7 +1272,15 @@ gum_ensure_code_readable (gconstpointer address,
+   {
+     if (!g_hash_table_contains (gum_softened_code_pages, cur_page))
+     {
+-      if (gum_try_mprotect ((gpointer) cur_page, page_size, GUM_PAGE_RWX))
++      /*
++       * Stealth: only add READ to execute-only (XOM) code pages, never W.
++       * The original RWX would leave a writable+executable page on a target
++       * module (e.g. libc) whenever gum relocates code; actual patching is
++       * done separately via gum_memory_patch_code_pages(), which flips the
++       * page to RW under thread-suspension and back to RX, so R+X is enough
++       * here and no rwx region is ever exposed.
++       */
++      if (gum_try_mprotect ((gpointer) cur_page, page_size, GUM_PAGE_RX))
+         g_hash_table_add (gum_softened_code_pages, (gpointer) cur_page);
+     }
+   }

@@ -1,0 +1,5 @@
+# Stealth patches for frida 17.9.1 android-arm64
+# frida tag: 17.9.1
+frida        base commit: 31d0d9a6f1b0b8abcccfc2ca10907381e97851f8
+frida-gum    base commit: 8bf4e039daafb689849267402a50a42f24e33868
+frida-core   base commit: a62376a3d6319fcdbc8c6b81b6879634be71929b
