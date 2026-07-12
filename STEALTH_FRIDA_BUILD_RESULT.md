@@ -5,12 +5,12 @@ with **NDK r29** (29.0.14206865), frida SDK/toolchain `20260311`, meson 1.11.2.
 
 ## Deliverable
 
-> **This repository ships the SOURCE, not the built binary.** Build it yourself with the
-> "Rebuild recipe" at the bottom (`./configure --host=android-arm64` → `ninja …`); the output
-> is `build/subprojects/frida-core/server/frida-server`. The sha256 values below are for the
-> **reference build** from this exact source — a matching hash confirms a byte-identical build
-> (frida's build is deterministic). If you were handed the prebuilt binary separately, verify
-> it against these.
+> **Prebuilt binaries are published on the [17.9.1 release](https://github.com/enchantedglycerin/frida-banana/releases/tag/17.9.1)**
+> (`stealth-frida-server-17.9.1-android-arm64` and its `.gz`). You can also build from source
+> with the "Rebuild recipe" at the bottom (`./configure --host=android-arm64` → `ninja …`);
+> the output is `build/subprojects/frida-core/server/frida-server`. The sha256 values below
+> identify the published binary — a matching hash confirms a byte-identical build (frida's
+> build is deterministic).
 
 | file | size | sha256 |
 |------|------|--------|

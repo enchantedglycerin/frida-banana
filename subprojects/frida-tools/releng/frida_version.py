@@ -34,6 +34,14 @@ def main(argv: List[str]):
 
 
 def detect(repo: Path) -> FridaVersion:
+    # Pinned-fork override: a committed releng/frida_version.txt takes precedence over `git
+    # describe`, so this fork reports a stable version regardless of tags, tag moves, later
+    # commits, a checkout without tags, or a source archive that has no .git at all. Delete
+    # that file to restore upstream git-derived behaviour.
+    pinned = _read_pinned_version(repo)
+    if pinned is not None:
+        return pinned
+
     version_name = "0.0.0"
     major = 0
     minor = 0
@@ -96,6 +104,30 @@ def detect(repo: Path) -> FridaVersion:
             version_name = f"{base}-dev.{distance - 1}"
 
     return FridaVersion(version_name, major, minor, micro, nano, commit)
+
+
+def _read_pinned_version(repo: Path):
+    try:
+        text = (repo / "releng" / "frida_version.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$", text)
+    if m is None:
+        return None
+
+    commit = ""
+    if (repo / ".git").exists():
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
+        commit = proc.stdout.strip()
+
+    return FridaVersion(text, int(m.group(1)), int(m.group(2)), int(m.group(3)), 0, commit)
 
 
 class VersionParseError(Exception):

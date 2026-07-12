@@ -18,9 +18,12 @@ and replaces obvious runtime identifiers—without patching the target applicati
 
 </div>
 
-> [!IMPORTANT]
-> **Source only.** This repository does not ship a prebuilt `frida-server`. Build it locally with
-> NDK r29, or verify a separately provided binary against the reference checksums below.
+> [!TIP]
+> **Prebuilt binaries** are attached to the
+> [**17.9.1 release**](https://github.com/enchantedglycerin/frida-banana/releases/tag/17.9.1)
+> (`stealth-frida-server-17.9.1-android-arm64` and its `.gz`). Prefer to build it yourself?
+> See [Build from source](#-build-from-source) — both paths produce the same binary; verify with
+> the checksums below.
 
 ## 🍌 What makes it banana
 
@@ -94,15 +97,19 @@ The stripped server is produced at:
 build/subprojects/frida-core/server/frida-server
 ```
 
-### Reference build
+### Download & checksums
+
+Prebuilt binaries are attached to the
+[**17.9.1 release**](https://github.com/enchantedglycerin/frida-banana/releases/tag/17.9.1):
 
 | Artifact | Size | SHA-256 |
 |---|---:|---|
-| `stealth-frida-server-17.9.1-android-arm64` | 53,091,240 bytes | `fa087dd74f5b09a24276ae3f5f6d454716c17efaa34a46deca92bb77c34f2f32` |
-| `stealth-frida-server-17.9.1-android-arm64.gz` | 23,351,182 bytes | `a8083db53db883200a9dce331a3a9275d482d7992ff3bf2ae35a443b76282c64` |
+| [`stealth-frida-server-17.9.1-android-arm64`](https://github.com/enchantedglycerin/frida-banana/releases/download/17.9.1/stealth-frida-server-17.9.1-android-arm64) | 53,091,240 bytes | `fa087dd74f5b09a24276ae3f5f6d454716c17efaa34a46deca92bb77c34f2f32` |
+| [`stealth-frida-server-17.9.1-android-arm64.gz`](https://github.com/enchantedglycerin/frida-banana/releases/download/17.9.1/stealth-frida-server-17.9.1-android-arm64.gz) | 23,351,182 bytes | `a8083db53db883200a9dce331a3a9275d482d7992ff3bf2ae35a443b76282c64` |
 
-Matching the first hash means your output is byte-identical to the reference build. Until a
-fresh flattened-clone build reproduces it, treat this checksum as a reference—not a promise.
+Matching the first hash means your build is byte-identical to the published binary. A fresh
+flattened-clone build has not yet been reproduced end-to-end, so treat the checksum as a
+reference for the published binary rather than a guarantee of your local toolchain's output.
 
 ## 🚀 Use it
 
