@@ -14,8 +14,8 @@ with **NDK r29** (29.0.14206865), frida SDK/toolchain `20260311`, meson 1.11.2.
 
 | file | size | sha256 |
 |------|------|--------|
-| `stealth-frida-server-17.9.1-android-arm64`     | 53,091,240 | `fa087dd74f5b09a24276ae3f5f6d454716c17efaa34a46deca92bb77c34f2f32` |
-| `stealth-frida-server-17.9.1-android-arm64.gz`  | 23,351,182 | `a8083db53db883200a9dce331a3a9275d482d7992ff3bf2ae35a443b76282c64` |
+| `stealth-frida-server-17.9.1-android-arm64`     | 53,078,936 | `927642ad43f6ce2507ce61850b193aea8b49963fdb8a199c20c962c936254678` |
+| `stealth-frida-server-17.9.1-android-arm64.gz`  | 23,349,041 | `faada68891359944243d7dd69eff7cc5529a3656881564f0771fbad2fb06b991` |
 
 Source patches (apply to a clean checkout — see rebuild recipe):
 `stealth-frida-gum.patch`, `stealth-frida-core.patch`, `stealth-patches-BASE-COMMITS.txt`.

@@ -58,6 +58,9 @@
 typedef struct _GumPatchCodeContext GumPatchCodeContext;
 typedef struct _GumPageLump GumPageLump;
 typedef struct _GumSuspendOperation GumSuspendOperation;
+#ifdef HAVE_ANDROID
+typedef struct _GumAndroidPatchPage GumAndroidPatchPage;
+#endif
 
 struct _GumMatchPattern
 {
@@ -88,8 +91,26 @@ struct _GumSuspendOperation
   GumMetalArray suspended_threads;
 };
 
+#ifdef HAVE_ANDROID
+
+struct _GumAndroidPatchPage
+{
+  gpointer address;
+  GumPageProtection original_protection;
+  GumPageProtection patch_protection;
+  GumPageProtection final_protection;
+  GumPageProtection current_protection;
+};
+
+#endif
+
 static void gum_apply_patch_code (gpointer mem, gpointer target_page,
     guint n_pages, gpointer user_data);
+#ifdef HAVE_ANDROID
+static gboolean gum_memory_patch_code_pages_android (
+    GPtrArray * sorted_addresses, gboolean coalesce,
+    GumMemoryPatchPagesApplyFunc apply, gpointer apply_data);
+#endif
 static gboolean gum_maybe_suspend_thread (const GumThreadDetails * details,
     gpointer user_data);
 
@@ -251,11 +272,10 @@ gum_query_rwx_support (void)
   return GUM_RWX_NONE;
 #elif defined (HAVE_ANDROID)
   /*
-   * Stealth: report NO rwx support so gum takes the W^X path everywhere
-   * (allocate RW, then mprotect RX on commit). This prevents gum from ever
-   * creating a writable+executable page, which is the tell an anti-cheat
-   * scans /proc/self/maps for (ART enforces W^X, so an rwxp anon region
-   * uniquely fingerprints an injected agent).
+   * Stealth: keep gum's generated code on a W^X allocation path (RW while
+   * emitting, then RX on commit). Existing executable pages are handled by
+   * gum_memory_patch_code_pages_android(), which uses a transient writable
+   * window without suspending the process.
    */
   return GUM_RWX_NONE;
 #else
@@ -499,6 +519,13 @@ cleanup:
 
     g_array_unref (plumps);
   }
+#ifdef HAVE_ANDROID
+  else if (!rwx_supported)
+  {
+    result = gum_memory_patch_code_pages_android (sorted_addresses, coalesce,
+        apply, apply_data);
+  }
+#endif
   else if (rwx_supported || !gum_code_segment_is_supported ())
   {
     GumPageProtection protection;
@@ -694,6 +721,185 @@ resume_threads:
 
   return result;
 }
+
+#ifdef HAVE_ANDROID
+
+static gboolean
+gum_memory_patch_code_pages_android (GPtrArray * sorted_addresses,
+                                     gboolean coalesce,
+                                     GumMemoryPatchPagesApplyFunc apply,
+                                     gpointer apply_data)
+{
+  gboolean result = TRUE;
+  gboolean applied = FALSE;
+  gsize page_size;
+  GArray * pages;
+  guint i;
+  guint8 * apply_start = NULL;
+  guint8 * apply_target_start = NULL;
+  guint apply_num_pages = 0;
+
+  page_size = gum_query_page_size ();
+  pages = g_array_sized_new (FALSE, FALSE, sizeof (GumAndroidPatchPage),
+      sorted_addresses->len);
+
+  for (i = 0; i != sorted_addresses->len; i++)
+  {
+    GumAndroidPatchPage page;
+
+    page.address = g_ptr_array_index (sorted_addresses, i);
+    if (!gum_memory_query_protection (page.address,
+        &page.original_protection))
+    {
+      result = FALSE;
+      goto cleanup;
+    }
+
+    /*
+     * Gum's freshly allocated, cloaked code pages enter here as exactly RW.
+     * Emit into them directly, then commit them RX, so anonymous Gum mappings
+     * never pass through W+X. Executable pages already belonging to the target
+     * need to remain executable while live code is patched, so they get a
+     * short RWX window and are then restored to their captured protection.
+     *
+     * Other non-executable protection combinations are unusual for this API;
+     * make them writable without adding EXEC and restore them afterwards.
+     */
+    if (page.original_protection == GUM_PAGE_RW &&
+        gum_cloak_has_range_containing (GUM_ADDRESS (page.address)))
+    {
+      page.patch_protection = GUM_PAGE_RW;
+      page.final_protection = GUM_PAGE_RX;
+    }
+    else if ((page.original_protection & GUM_PAGE_EXECUTE) != 0)
+    {
+      page.patch_protection = GUM_PAGE_RWX;
+      page.final_protection = page.original_protection;
+    }
+    else
+    {
+      page.patch_protection = (GumPageProtection) (
+          page.original_protection | GUM_PAGE_READ | GUM_PAGE_WRITE);
+      page.final_protection = page.original_protection;
+    }
+    page.current_protection = page.original_protection;
+
+    g_array_append_val (pages, page);
+  }
+
+  for (i = 0; i != pages->len; i++)
+  {
+    GumAndroidPatchPage * page = &g_array_index (pages,
+        GumAndroidPatchPage, i);
+
+    if (page->patch_protection == page->current_protection)
+      continue;
+
+    if (!gum_try_mprotect (page->address, page_size,
+        page->patch_protection))
+    {
+      result = FALSE;
+      goto cleanup;
+    }
+
+    page->current_protection = page->patch_protection;
+  }
+
+  for (i = 0; i != pages->len; i++)
+  {
+    GumAndroidPatchPage * page = &g_array_index (pages,
+        GumAndroidPatchPage, i);
+    guint8 * target_page = page->address;
+
+    if (coalesce)
+    {
+      if (apply_start != NULL)
+      {
+        if (target_page == apply_start + (page_size * apply_num_pages))
+        {
+          apply_num_pages++;
+        }
+        else
+        {
+          apply (apply_start, apply_target_start, apply_num_pages, apply_data);
+          apply_start = NULL;
+        }
+      }
+
+      if (apply_start == NULL)
+      {
+        apply_start = target_page;
+        apply_target_start = target_page;
+        apply_num_pages = 1;
+      }
+    }
+    else
+    {
+      apply (target_page, target_page, 1, apply_data);
+    }
+  }
+
+  if (apply_num_pages != 0)
+    apply (apply_start, apply_target_start, apply_num_pages, apply_data);
+
+  applied = TRUE;
+
+cleanup:
+  for (i = 0; i != pages->len; i++)
+  {
+    GumAndroidPatchPage * page = &g_array_index (pages,
+        GumAndroidPatchPage, i);
+    GumPageProtection desired_protection = applied
+        ? page->final_protection
+        : page->original_protection;
+
+    if (page->current_protection == desired_protection)
+      continue;
+
+    if (gum_try_mprotect (page->address, page_size, desired_protection))
+    {
+      page->current_protection = desired_protection;
+    }
+    else
+    {
+      GumPageProtection nonwritable_protection;
+
+      result = FALSE;
+
+      /*
+       * If exact restoration fails, make one best-effort attempt to remove
+       * WRITE while retaining execute/read access. This avoids leaving a live
+       * RWX page in the ordinary recoverable failure case.
+       */
+      nonwritable_protection = (GumPageProtection) (
+          page->current_protection & ~GUM_PAGE_WRITE);
+      if ((page->current_protection & GUM_PAGE_EXECUTE) != 0 &&
+          nonwritable_protection != page->current_protection &&
+          gum_try_mprotect (page->address, page_size,
+              nonwritable_protection))
+      {
+        page->current_protection = nonwritable_protection;
+      }
+    }
+  }
+
+  if (applied)
+  {
+    for (i = 0; i != pages->len; i++)
+    {
+      const GumAndroidPatchPage * page = &g_array_index (pages,
+          GumAndroidPatchPage, i);
+
+      gum_clear_cache (page->address, page_size);
+    }
+  }
+
+  g_array_unref (pages);
+
+  return result;
+}
+
+#endif
 
 static gboolean
 gum_maybe_suspend_thread (const GumThreadDetails * details,
@@ -1273,12 +1479,10 @@ gum_ensure_code_readable (gconstpointer address,
     if (!g_hash_table_contains (gum_softened_code_pages, cur_page))
     {
       /*
-       * Stealth: only add READ to execute-only (XOM) code pages, never W.
-       * The original RWX would leave a writable+executable page on a target
-       * module (e.g. libc) whenever gum relocates code; actual patching is
-       * done separately via gum_memory_patch_code_pages(), which flips the
-       * page to RW under thread-suspension and back to RX, so R+X is enough
-       * here and no rwx region is ever exposed.
+       * Only add READ to execute-only (XOM) code pages here. Actual patching
+       * is handled separately by gum_memory_patch_code_pages(), whose Android
+       * policy keeps fresh RW code W^X and gives existing executable pages a
+       * short writable window before restoring their captured protection.
        */
       if (gum_try_mprotect ((gpointer) cur_page, page_size, GUM_PAGE_RX))
         g_hash_table_add (gum_softened_code_pages, (gpointer) cur_page);

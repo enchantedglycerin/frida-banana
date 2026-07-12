@@ -607,12 +607,12 @@ gum_code_deflector_dispatcher_new (const GumAddressSpec * caller,
         gum_memory_allocate (NULL, thunk_size, thunk_size, protection);
     dispatcher->thunk_size = thunk_size;
 
-    gum_memory_patch_code (dispatcher->thunk, GUM_MAX_CODE_DEFLECTOR_THUNK_SIZE,
-        (GumMemoryPatchApplyFunc) gum_write_thunk, dispatcher);
-
     range.base_address = GUM_ADDRESS (dispatcher->thunk);
     range.size = thunk_size;
     gum_cloak_add_range (&range);
+
+    gum_memory_patch_code (dispatcher->thunk, GUM_MAX_CODE_DEFLECTOR_THUNK_SIZE,
+        (GumMemoryPatchApplyFunc) gum_write_thunk, dispatcher);
   }
 
   insert_ctx.pc = GUM_ADDRESS (dispatcher->address);
