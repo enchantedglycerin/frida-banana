@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banana-frida-hero.svg" alt="banana-frida — stealth Frida for Android" width="100%">
+<img src="docs/assets/frida-banana-hero.svg" alt="frida-banana — stealth Frida for Android" width="100%">
 
 <br>
 
@@ -11,7 +11,7 @@
 
 **A source-level Frida 17.9.1 fork for low-footprint Android instrumentation.**
 
-`banana-frida` removes Frida's anonymous `rwxp` footprint, gives Gum allocations ART-like names,
+`frida-banana` removes Frida's anonymous `rwxp` footprint, gives Gum allocations ART-like names,
 and replaces obvious runtime identifiers—without patching the target application's `.text` pages.
 
 [Build](#-build-from-source) · [Use](#-use-it) · [Verify](#-verify-on-device) · [Technical notes](STEALTH_FRIDA_BUILD_RESULT.md)
@@ -76,8 +76,8 @@ The exact implementation is intentionally small and reviewable:
 | Host | Linux or WSL2 |
 
 ```bash
-git clone --branch 17.9.1 https://github.com/enchantedglycerin/banana-frida.git
-cd banana-frida
+git clone --branch 17.9.1 https://github.com/enchantedglycerin/frida-banana.git
+cd frida-banana
 
 export ANDROID_NDK_ROOT="$HOME/android-ndk-r29"
 export PATH="$HOME/opt/node/bin:$HOME/.local/bin:$PATH"
@@ -174,7 +174,7 @@ failure interpretation, and rebuild notes.
 ## 🗂 Repository map
 
 ```text
-banana-frida/
+frida-banana/
 ├── capture_hwbp.js                  # resilient hardware-breakpoint capture helper
 ├── presence_only.js                 # minimal injection / mapping probe
 ├── stealth-frida-gum.patch          # W^X, VMA labels, scheduler rename
